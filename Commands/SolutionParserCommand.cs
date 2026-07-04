@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using System.Xml.Linq;
 using Microsoft.Build.Construction;
 using Microsoft.Build.Definition;
 using Microsoft.Build.Evaluation;
@@ -10,6 +11,7 @@ using MSProject = Microsoft.Build.Evaluation.Project;
 using Project = Models.Project;
 
 namespace Commands;
+
 public sealed class SolutionParserCommand : Command<SolutionParserCommand.Settings>
 {
     public sealed class Settings : CommandSettings
@@ -26,7 +28,8 @@ public sealed class SolutionParserCommand : Command<SolutionParserCommand.Settin
         var solutionFilePath = Path.GetFullPath(settings.Solution);
         string? solutionFolderPath;
 
-        if (!solutionFilePath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+        if (!(solutionFilePath.EndsWith(".sln", StringComparison.OrdinalIgnoreCase)
+            || solutionFilePath.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
             && Directory.Exists(solutionFilePath))
         {
             solutionFolderPath = solutionFilePath;
@@ -70,10 +73,23 @@ public sealed class SolutionParserCommand : Command<SolutionParserCommand.Settin
 
         if (solutionFilePath is not null)
         {
-            var sln = SolutionFile.Parse(solutionFilePath);
-            projFiles = sln.ProjectsInOrder
-                .Where(prj => prj.ProjectType == SolutionProjectType.KnownToBeMSBuildFormat)
-                .Select(prj => new ProjectRecord(prj.ProjectName, prj.AbsolutePath));
+            if (solutionFilePath.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
+            {
+                XDocument doc = XDocument.Load(solutionFilePath);
+                projFiles = doc.Descendants("Project")
+                    .Select(p => new ProjectRecord(
+                        Path.GetFileNameWithoutExtension((string)p.Attribute("Path")!)!,
+                        Path.GetFullPath(Path.Combine(solutionFolderPath!, (string)p.Attribute("Path")!))
+                    ))
+                    .ToList();
+            }
+            else
+            {
+                var sln = SolutionFile.Parse(solutionFilePath);
+                projFiles = sln.ProjectsInOrder
+                    .Where(prj => prj.ProjectType == SolutionProjectType.KnownToBeMSBuildFormat)
+                    .Select(prj => new ProjectRecord(prj.ProjectName, prj.AbsolutePath));
+            }
         }
         else if (solutionFolderPath is not null)
         {
